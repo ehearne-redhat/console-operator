@@ -54,8 +54,17 @@ func SharedMeta() metav1.ObjectMeta {
 
 // objects can have more than one ownerRef, potentially
 func AddOwnerRef(obj metav1.Object, ownerRef *metav1.OwnerReference) {
+	ownerRefs := obj.GetOwnerReferences()
+	// if the object has one or more ownerRef objects, then we must
+	// ensure that their controller attribute is set to false.
+	// Only one ownerRef.controller == true .
+	// https://kubernetes.io/docs/concepts/overview/working-with-objects/owners-dependents/#owner-references-in-object-specifications
+	falseBool := false
+	for ownerRef := range ownerRefs {
+		ownerRefs[ownerRef].Controller = &falseBool
+	}
 	if obj != nil && ownerRef != nil {
-		obj.SetOwnerReferences(append(obj.GetOwnerReferences(), *ownerRef))
+		obj.SetOwnerReferences(append(ownerRefs, *ownerRef))
 	}
 }
 
