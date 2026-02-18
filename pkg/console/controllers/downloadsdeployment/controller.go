@@ -2,18 +2,14 @@ package downloadsdeployment
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	appsinformersv1 "k8s.io/client-go/informers/apps/v1"
-	coreinformersv1 "k8s.io/client-go/informers/core/v1"
 	appsclientv1 "k8s.io/client-go/kubernetes/typed/apps/v1"
-	coreclientv1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/klog/v2"
 
 	configv1 "github.com/openshift/api/config/v1"
@@ -32,7 +28,6 @@ import (
 
 	"github.com/openshift/console-operator/pkg/console/controllers/util"
 	deploymentsub "github.com/openshift/console-operator/pkg/console/subresource/deployment"
-	serviceaccountsub "github.com/openshift/console-operator/pkg/console/subresource/serviceaccount"
 )
 
 type DownloadsDeploymentSyncController struct {
@@ -41,8 +36,7 @@ type DownloadsDeploymentSyncController struct {
 	consoleOperatorLister operatorlistersv1.ConsoleLister
 	infrastructureLister  configlistersv1.InfrastructureLister
 	// core kube
-	deploymentClient     appsclientv1.DeploymentsGetter
-	serviceAccountClient coreclientv1.ServiceAccountsGetter
+	deploymentClient appsclientv1.DeploymentsGetter
 }
 
 func NewDownloadsDeploymentSyncController(
@@ -54,8 +48,6 @@ func NewDownloadsDeploymentSyncController(
 	// core kube
 	deploymentClient appsclientv1.DeploymentsGetter,
 	deploymentInformer appsinformersv1.DeploymentInformer,
-	serviceAccountClient coreclientv1.ServiceAccountsGetter,
-	serviceAccountInformer coreinformersv1.ServiceAccountInformer,
 	// events
 	recorder events.Recorder,
 ) factory.Controller {
@@ -67,8 +59,7 @@ func NewDownloadsDeploymentSyncController(
 		consoleOperatorLister: operatorConfigInformer.Lister(),
 		infrastructureLister:  configInformer.Config().V1().Infrastructures().Lister(),
 		// clients
-		deploymentClient:     deploymentClient,
-		serviceAccountClient: serviceAccountClient,
+		deploymentClient: deploymentClient,
 	}
 
 	configNameFilter := util.IncludeNamesFilter(api.ConfigResourceName)
@@ -82,7 +73,6 @@ func NewDownloadsDeploymentSyncController(
 		).WithFilteredEventsInformers( // downloads deployment
 		downloadsNameFilter,
 		deploymentInformer.Informer(),
-		serviceAccountInformer.Informer(),
 	).ResyncEvery(time.Minute).WithSync(ctrl.Sync).
 		ToController("ConsoleDownloadsDeploymentSyncController", recorder.WithComponentSuffix("console-downloads-deployment-controller"))
 }
@@ -96,13 +86,13 @@ func (c *DownloadsDeploymentSyncController) Sync(ctx context.Context, controller
 
 	switch operatorConfigCopy.Spec.ManagementState {
 	case operatorv1.Managed:
-		klog.V(4).Infoln("console is in a managed state: syncing downloads deployment and service account")
+		klog.V(4).Infoln("console is in a managed state: syncing downloads deployment")
 	case operatorv1.Unmanaged:
-		klog.V(4).Infoln("console is in an unmanaged state: skipping downloads deployment sync and service account")
+		klog.V(4).Infoln("console is in an unmanaged state: skipping downloads deployment sync")
 		return nil
 	case operatorv1.Removed:
-		klog.V(4).Infoln("console is in an removed state: removing synced downloads deployment and service account")
-		return c.removeDownloadsDeploymentAndServiceAccount(ctx)
+		klog.V(4).Infoln("console is in an removed state: removing synced downloads deployment")
+		return c.removeDownloadsDeployment(ctx)
 	default:
 		return fmt.Errorf("unknown state: %v", operatorConfigCopy.Spec.ManagementState)
 	}
@@ -112,12 +102,6 @@ func (c *DownloadsDeploymentSyncController) Sync(ctx context.Context, controller
 	statusHandler.AddCondition(status.HandleDegraded("DownloadsDeploymentSync", "FailedInfrastructureConfigGet", err))
 	if err != nil {
 		return statusHandler.FlushAndReturn(err)
-	}
-
-	_, _, serviceAccountErr := c.SyncDownloadsServiceAccount(ctx, operatorConfigCopy, controllerContext)
-	statusHandler.AddConditions(status.HandleProgressingOrDegraded("DownloadsServiceAccountSync", "FailedApply", serviceAccountErr))
-	if serviceAccountErr != nil {
-		return statusHandler.FlushAndReturn(serviceAccountErr)
 	}
 
 	actualDownloadsDownloadsDeployment, _, downloadsDeploymentErr := c.SyncDownloadsDeployment(ctx, operatorConfigCopy, infrastructureConfig, controllerContext)
@@ -142,24 +126,10 @@ func (c *DownloadsDeploymentSyncController) SyncDownloadsDeployment(ctx context.
 	)
 }
 
-func (c *DownloadsDeploymentSyncController) SyncDownloadsServiceAccount(ctx context.Context, operatorConfigCopy *operatorv1.Console, controllerContext factory.SyncContext) (*corev1.ServiceAccount, bool, error) {
-	requiredDownloadsServiceAccount := serviceaccountsub.DefaultDownloadsServiceAccount(operatorConfigCopy)
-
-	return resourceapply.ApplyServiceAccount(ctx,
-		c.serviceAccountClient,
-		controllerContext.Recorder(),
-		requiredDownloadsServiceAccount,
-	)
-}
-
-func (c *DownloadsDeploymentSyncController) removeDownloadsDeploymentAndServiceAccount(ctx context.Context) error {
+func (c *DownloadsDeploymentSyncController) removeDownloadsDeployment(ctx context.Context) error {
 	err := c.deploymentClient.Deployments(api.OpenShiftConsoleNamespace).Delete(ctx, api.OpenShiftConsoleDownloadsDeploymentName, metav1.DeleteOptions{})
 	if apierrors.IsNotFound(err) {
 		return nil
 	}
-	err1 := c.serviceAccountClient.ServiceAccounts(api.OpenShiftConsoleNamespace).Delete(ctx, api.DownloadsResourceName, metav1.DeleteOptions{})
-	if apierrors.IsNotFound(err) {
-		return nil
-	}
-	return errors.Join(err, err1)
+	return err
 }
