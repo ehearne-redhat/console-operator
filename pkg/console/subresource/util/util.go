@@ -59,9 +59,9 @@ func AddOwnerRef(obj metav1.Object, ownerRef *metav1.OwnerReference) {
 	// ensure that their controller attribute is set to false.
 	// Only one ownerRef.controller == true .
 	// https://kubernetes.io/docs/concepts/overview/working-with-objects/owners-dependents/#owner-references-in-object-specifications
-	falseBool := false
-	for ownerRef := range ownerRefs {
-		ownerRefs[ownerRef].Controller = &falseBool
+	for oR := range ownerRefs {
+		falseBool := false
+		ownerRefs[oR].Controller = &falseBool
 	}
 	if obj != nil && ownerRef != nil {
 		obj.SetOwnerReferences(append(ownerRefs, *ownerRef))
