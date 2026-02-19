@@ -128,6 +128,16 @@ func (c *ServiceAccountSyncController) SyncServiceAccount(ctx context.Context, o
 		return nil, false, err
 	}
 
+	// if the object has one or more ownerRef objects, then we must
+	// ensure that their controller attribute is set to false.
+	// Only one ownerRef.controller == true .
+	// https://kubernetes.io/docs/concepts/overview/working-with-objects/owners-dependents/#owner-references-in-object-specifications
+
+	for oR := range requiredServiceAccount.OwnerReferences {
+		falseBool := false
+		requiredServiceAccount.OwnerReferences[oR].Controller = &falseBool
+	}
+
 	return resourceapply.ApplyServiceAccount(ctx,
 		c.serviceAccountClient,
 		controllerContext.Recorder(),
